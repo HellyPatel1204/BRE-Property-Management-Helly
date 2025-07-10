@@ -216,7 +216,7 @@ page 50973 "Revenue Recognition Item Sub"
            pContractEndDate: Date;
            pAllocationMonth: Integer;
            pAllocationYear: Integer;
-            pTerminationDate: Date
+           pTerminationDate: Date
        ): Integer
     var
         SelectedMonthStart: Date;
@@ -229,7 +229,6 @@ page 50973 "Revenue Recognition Item Sub"
         // Start and end of the selected month
         SelectedMonthStart := DMY2Date(1, pAllocationMonth, pAllocationYear);
         SelectedMonthEnd := CALCDATE('<+1M-1D>', SelectedMonthStart);
-
 
         // Special Termination case:
         if (pTerminationDate <> 0D) then begin
@@ -327,7 +326,82 @@ page 50973 "Revenue Recognition Item Sub"
         exit(false);
     end;
 
-    // Create Revenue Recognition Detail directly from Revenue Structure
+    // NEW: Function to check if contract is suspended in selected month/year
+    local procedure IsContractSuspendedInPeriod(
+        pContractID: Integer;
+        pAllocationMonth: Integer;
+        pAllocationYear: Integer;
+        var pSuspensionDate: Date
+    ): Boolean
+    var
+        SuspendedReasonList: Record SuspendReasonTable;
+        SelectedMonthStart: Date;
+        SelectedMonthEnd: Date;
+    begin
+        // Calculate selected month start and end dates
+        SelectedMonthStart := DMY2Date(1, pAllocationMonth, pAllocationYear);
+        SelectedMonthEnd := CALCDATE('<+1M-1D>', SelectedMonthStart);
+
+        // Check if contract is suspended
+        SuspendedReasonList.Reset();
+        SuspendedReasonList.SetRange("Contract ID", pContractID);
+        if SuspendedReasonList.FindFirst() then begin
+            // Check if suspension date falls within selected month/year
+            if (SuspendedReasonList.DateEffective >= SelectedMonthStart) and
+               (SuspendedReasonList.DateEffective <= SelectedMonthEnd) then begin
+                pSuspensionDate := SuspendedReasonList.DateEffective;
+                exit(true);
+            end;
+        end;
+
+        exit(false);
+    end;
+
+    // NEW: Calculate days for suspended contract (only till suspension date)
+    local procedure CalculateSuspendedContractDays(
+        pContractStartDate: Date;
+        pContractEndDate: Date;
+        pAllocationMonth: Integer;
+        pAllocationYear: Integer;
+        pSuspensionDate: Date
+    ): Integer
+    var
+        SelectedMonthStart: Date;
+        SelectedMonthEnd: Date;
+        EffectiveStartDate: Date;
+        EffectiveEndDate: Date;
+        NoOfDays: Integer;
+        SuspensionDay: Integer;
+    begin
+        // Start and end of the selected month
+        SelectedMonthStart := DMY2Date(1, pAllocationMonth, pAllocationYear);
+        SelectedMonthEnd := CALCDATE('<+1M-1D>', SelectedMonthStart);
+
+        // Return 0 if contract is outside of the selected month
+        if (pContractStartDate > SelectedMonthEnd) or (pContractEndDate < SelectedMonthStart) then
+            exit(0);
+
+        // Determine the effective start date
+        if pContractStartDate > SelectedMonthStart then
+            EffectiveStartDate := pContractStartDate
+        else
+            EffectiveStartDate := SelectedMonthStart;
+
+        // For suspended contracts, effective end date is the suspension date
+        // (not the full month or contract end date)
+        EffectiveEndDate := pSuspensionDate;
+
+        // Make sure suspension date is not before the effective start
+        if EffectiveEndDate < EffectiveStartDate then
+            exit(0);
+
+        // Calculate inclusive number of days till suspension date
+        NoOfDays := EffectiveEndDate - EffectiveStartDate + 1;
+
+        exit(NoOfDays);
+    end;
+
+    // MODIFIED: Update your existing CreateRevenueRecognitionDetailDirect procedure
     local procedure CreateRevenueRecognitionDetailDirect(
         pTenancyContract: Record "Tenancy Contract";
         pRevenueStructure: Record "Revenue Structure";
@@ -348,6 +422,8 @@ page 50973 "Revenue Recognition Item Sub"
         SuspendedPeriodDays: Integer;
         FinalCalculation: Record "Final Calculation";
         TerminationDate: Date;
+        SuspensionDate: Date;
+        IsContractSuspended: Boolean;
     begin
         // Calculate month start and end dates
         RevenueAllocationStartDate := DMY2Date(1, pRevenueAllocation.Month, pRevenueAllocation."Financial Year");
@@ -364,24 +440,42 @@ page 50973 "Revenue Recognition Item Sub"
         else
             TerminationDate := 0D;
 
-        // Calculate number of days for the selected month / year (regular allocation)
-        NoOfDays := CalculateNoOfDays(
-            pTenancyContract."Contract Start Date",
-            pTenancyContract."Contract End Date",
+        // NEW: Check if contract is suspended in selected month/year
+        IsContractSuspended := IsContractSuspendedInPeriod(
+            pTenancyContract."Contract ID",
             pRevenueAllocation.Month,
             pRevenueAllocation."Financial Year",
-            TerminationDate
+            SuspensionDate
         );
+
+        // Calculate number of days based on suspension status
+        if IsContractSuspended then begin
+            // For suspended contracts, calculate days only till suspension date
+            NoOfDays := CalculateSuspendedContractDays(
+                pTenancyContract."Contract Start Date",
+                pTenancyContract."Contract End Date",
+                pRevenueAllocation.Month,
+                pRevenueAllocation."Financial Year",
+                SuspensionDate
+            );
+        end else begin
+            // For normal contracts, use existing logic
+            NoOfDays := CalculateNoOfDays(
+                pTenancyContract."Contract Start Date",
+                pTenancyContract."Contract End Date",
+                pRevenueAllocation.Month,
+                pRevenueAllocation."Financial Year",
+                TerminationDate
+            );
+        end;
 
         // Calculate per day amount from Revenue Structure
         if pRevenueStructure."Amount Including VAT" > 0 then begin
-            // You need to get the total days in the period to calculate per day amount
-            // This depends on your business logic - assuming monthly calculation
             PerDayAmount := pRevenueStructure."Amount Including VAT" / Date2DMY(RevenueAllocationEndDate, 1);
         end else
             PerDayAmount := 0;
 
-        // Create regular monthly allocation record (only if there are days to allocate)
+        // Create revenue record only if there are days to allocate
         if NoOfDays > 0 then begin
             CreateRevenueRecord(
                 pTenancyContract,
@@ -391,11 +485,11 @@ page 50973 "Revenue Recognition Item Sub"
                 PostingDate,
                 NoOfDays,
                 PerDayAmount,
-                false // Not suspended period allocation
+                IsContractSuspended // Pass suspension status
             );
         end;
 
-        // NEW: Check for suspension to active scenario
+        // Keep existing logic for suspension to active scenario
         if HasSuspensionToActiveScenario(
             pTenancyContract."Contract ID",
             RevenueAllocationStartDate,
@@ -403,14 +497,12 @@ page 50973 "Revenue Recognition Item Sub"
             SuspensionStartDate,
             SuspensionEndDate
         ) then begin
-            // Calculate suspended period days
             SuspendedPeriodDays := CalculateSuspendedPeriodDays(
                 SuspensionStartDate,
                 SuspensionEndDate,
                 RevenueAllocationEndDate
             );
 
-            // Create suspended period allocation record if there are days to allocate
             if SuspendedPeriodDays > 0 then begin
                 CreateRevenueRecord(
                     pTenancyContract,
@@ -420,7 +512,7 @@ page 50973 "Revenue Recognition Item Sub"
                     PostingDate,
                     SuspendedPeriodDays,
                     PerDayAmount,
-                    true // This is suspended period allocation
+                    true
                 );
             end;
         end;
@@ -477,7 +569,6 @@ page 50973 "Revenue Recognition Item Sub"
         else
             RevenueRecognitionDetails."Single Unit Names" := '';
 
-
         // Add allocation period details
         RevenueRecognitionDetails."Posting Month" := pRevenueAllocation.Month;
         RevenueRecognitionDetails."Posting Year" := pRevenueAllocation."Financial Year";
@@ -486,7 +577,7 @@ page 50973 "Revenue Recognition Item Sub"
         if IsSuspendedPeriodAllocation then
             RevenueRecognitionDetails."Posting Period" :=
                 FORMAT(pRevenueAllocation.Month) + ' ' +
-                FORMAT(pRevenueAllocation."Financial Year") + ' - Suspended Period Allocation'
+                FORMAT(pRevenueAllocation."Financial Year")
         else
             RevenueRecognitionDetails."Posting Period" :=
                 FORMAT(pRevenueAllocation.Month) + ' ' +
