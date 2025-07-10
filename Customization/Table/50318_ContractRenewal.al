@@ -242,6 +242,9 @@ table 50318 "Contract Renewal"
         {
             DataClassification = ToBeClassified;
             OptionMembers = " ",Active,"Renewal of Original Contract ID";
+            Editable = false;
+
+
 
             trigger OnValidate()
             var
@@ -1535,6 +1538,9 @@ table 50318 "Contract Renewal"
         end
 
     end;
+
+
+
 
 
 

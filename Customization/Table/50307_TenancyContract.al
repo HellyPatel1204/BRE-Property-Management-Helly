@@ -2529,38 +2529,38 @@ table 50307 "Tenancy Contract"
 
     //-------------Update Tenancy Contract Status on Contract End Date--------------//
 
-    procedure UpdateStatusesOnContractEnd()
-    var
-        RenewalRec: Record "Contract Renewal"; // Reference to the Contract Renewal table
-        TenancyRec: Record "Tenancy Contract"; // Reference to the Tenancy Contract table
-    begin
-        // Check if the record's current status is "Active-Contract Renewed" and the contract end date has passed
-        if ("Tenant Contract Status" = "Tenant Contract Status"::"Active-Contract Renewed") and
-           ("Contract End Date" <= Today()) then begin
+    // procedure UpdateStatusesOnContractEnd()
+    // var
+    //     RenewalRec: Record "Contract Renewal"; // Reference to the Contract Renewal table
+    //     TenancyRec: Record "Tenancy Contract"; // Reference to the Tenancy Contract table
+    // begin
+    //     // Check if the record's current status is "Active-Contract Renewed" and the contract end date has passed
+    //     if ("Tenant Contract Status" = "Tenant Contract Status"::"Active-Contract Renewed") and
+    //        ("Contract End Date" <= Today()) then begin
 
-            // Update the Tenant Contract Status to "Contract Renewed"
-            "Tenant Contract Status" := "Tenant Contract Status"::"Contract Renewed";
-            Modify();
+    //         // Update the Tenant Contract Status to "Contract Renewed"
+    //         "Tenant Contract Status" := "Tenant Contract Status"::"Contract Renewed";
+    //         Modify();
 
-            // Update the corresponding Contract Renewal records' status to Active
-            RenewalRec.SetRange("Contract ID", "Contract ID"); // Filter by the current record's Contract ID
-            if RenewalRec.FindSet() then begin
-                repeat
-                    RenewalRec."Contract Status" := RenewalRec."Contract Status"::Active;
-                    RenewalRec.Modify();
+    //         // Update the corresponding Contract Renewal records' status to Active
+    //         RenewalRec.SetRange("Contract ID", "Contract ID"); // Filter by the current record's Contract ID
+    //         if RenewalRec.FindSet() then begin
+    //             repeat
+    //                 RenewalRec."Contract Status" := RenewalRec."Contract Status"::Active;
+    //                 RenewalRec.Modify();
 
-                    // If Contract Renewal Status is Active, update Tenancy Contract Status
-                    TenancyRec.SetRange("Renewal Proposal ID", RenewalRec."Id"); // Match by Renewal Proposal ID
-                    if TenancyRec.FindSet() then begin
-                        repeat
-                            TenancyRec."Tenant Contract Status" := TenancyRec."Tenant Contract Status"::Active;
-                            TenancyRec.Modify();
-                        until TenancyRec.Next() = 0; // Process all matching records
-                    end;
-                until RenewalRec.Next() = 0; // Process all matching Contract Renewal records
-            end;
-        end;
-    end;
+    //                 // If Contract Renewal Status is Active, update Tenancy Contract Status
+    //                 TenancyRec.SetRange("Renewal Proposal ID", RenewalRec."Id"); // Match by Renewal Proposal ID
+    //                 if TenancyRec.FindSet() then begin
+    //                     repeat
+    //                         TenancyRec."Tenant Contract Status" := TenancyRec."Tenant Contract Status"::Active;
+    //                         TenancyRec.Modify();
+    //                     until TenancyRec.Next() = 0; // Process all matching records
+    //                 end;
+    //             until RenewalRec.Next() = 0; // Process all matching Contract Renewal records
+    //         end;
+    //     end;
+    // end;
 
     //-------------Update Tenancy Contract Status on Contract End Date--------------//
 
@@ -2569,7 +2569,7 @@ table 50307 "Tenancy Contract"
     var
 
     begin
-        UpdateStatusesOnContractEnd();
+        // UpdateStatusesOnContractEnd();
         populateTenantContractStatusPaymentschedule();
 
 
