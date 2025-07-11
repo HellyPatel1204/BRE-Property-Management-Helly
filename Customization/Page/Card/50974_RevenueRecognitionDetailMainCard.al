@@ -22,10 +22,6 @@ page 50974 "Revenue Recognition Detail Sub"
                 {
                     ApplicationArea = All;
                 }
-                field("Description"; Rec."Description")
-                {
-                    ApplicationArea = All;
-                }
                 field("Property Name"; Rec."Property Name")
                 {
                     ApplicationArea = All;

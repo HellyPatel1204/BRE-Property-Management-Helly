@@ -179,16 +179,11 @@ table 50962 "Revenue Recognition Details"
             Caption = 'Single Unit Name';
             Editable = false;
         }
-        field(50129; "Description"; Text[100])
-        {
-            DataClassification = ToBeClassified;
-            Caption = 'Description';
-            Editable = false;
-        }
         field(50130; "Item Type"; Text[100])
         {
             DataClassification = ToBeClassified;
             Caption = 'Item Type';
+            Editable = false;
         }
     }
 
