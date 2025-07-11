@@ -1488,7 +1488,7 @@ page 50122 "Revenue Allocation Card"
             FilteredContractRec."Final Annual Amount" := TotalAnnualAmount;
             FilteredContractRec."Posting Month" := MonthNo;
             FilteredContractRec."Posting Year" := FinancialYear;
-            FilteredContractRec.Description := 'Suspention';
+            FilteredContractRec.Description := 'Suspension';
             FilteredContractRec."Posting Period" := 'Suspension Recovery - ' + Format(MonthNo) + ' ' + Format(FinancialYear);
             FilteredContractRec."Owner Name" := ContractRec."Owner's Name";
 
@@ -2794,7 +2794,7 @@ page 50122 "Revenue Allocation Card"
             FilteredContractRec."Posting Year" := FinancialYear;
             FilteredContractRec."Total Value" := FilteredContractRec."Per Month Rent";
             FilteredContractRec."Owner Share" := FilteredContractRec."Per Month Rent";
-            FilteredContractRec.Description := 'Suspention';
+            FilteredContractRec.Description := 'Suspension';
             FilteredContractRec."Posting Period" := 'Suspension Recovery - ' + Format(MonthNo) + ' ' + Format(FinancialYear);
             FilteredContractRec."Owner Name" := ContractRec."Owner's Name";
 
