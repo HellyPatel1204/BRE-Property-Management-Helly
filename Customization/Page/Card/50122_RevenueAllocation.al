@@ -46,7 +46,7 @@ page 50122 "Revenue Allocation Card"
             }
             group("Total Calculations")
             {
-                Caption = 'Total Calculations';
+                Caption = 'Total Calculations(Rent)';
                 field(TotalContractAmount; TotalContractAmount)
                 {
                     Caption = 'Total Contract Amount';
@@ -92,11 +92,25 @@ page 50122 "Revenue Allocation Card"
             }
             group(" ")
             {
+                Caption = 'Total Calculations(Other Charges)';
                 field("Total Amount"; totalamounts)
                 {
                     ApplicationArea = All;
                     Caption = 'Total Amount';
                     Editable = false;
+                }
+
+                field("Total Annual Amount"; TotalAnnualAmounts)
+                {
+                    Caption = 'Total Annual Amount';
+                    Editable = false;
+                    ApplicationArea = All;
+                }
+                field("Total Final Annual Amount"; TotalFinalAnnualAmounts)
+                {
+                    Caption = 'Total Final Annual Amount';
+                    Editable = false;
+                    ApplicationArea = All;
                 }
                 field("Total Contract Amount"; totalcontractAmounts)
                 {
@@ -1514,6 +1528,11 @@ page 50122 "Revenue Allocation Card"
             repeat
                 totalcontractAmounts += revenueItemLine."Contract Amount";
                 totalamounts += revenueItemLine."Total Value";
+                TotalAnnualAmounts += revenueItemLine."Annual Amount";
+                TotalFinalAnnualAmounts += revenueItemLine."Final Annual Amount";
+
+
+
             until revenueItemLine.Next() = 0;
 
 
@@ -1535,39 +1554,6 @@ page 50122 "Revenue Allocation Card"
     begin
         CalculateAndStoreTotalRevenue();
     end;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -2810,35 +2796,6 @@ page 50122 "Revenue Allocation Card"
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     //////////////////////////////FIXED MONTH RENT///////////////////////////////////////////////////////////////
 
     var
@@ -2853,6 +2810,10 @@ page 50122 "Revenue Allocation Card"
 
         totalcombinecontractAmounts: Decimal;
         totalcombineamounts: Decimal;
+
+        TotalAnnualAmounts: Decimal;
+
+        TotalFinalAnnualAmounts: Decimal;
 
     // trigger OnAfterGetRecord()
     // begin
