@@ -36,25 +36,6 @@ page 50973 "Revenue Recognition Item Sub"
     {
         area(Processing)
         {
-            // action(delete)
-            // {
-            //     Image = Delete;
-            //     ApplicationArea = All;
-
-            //     trigger OnAction()
-            //     var
-            //         revenueRecog: Record "Revenue Recognition Details";
-            //     begin
-            //         revenueRecog.SetRange("Entry No.", 510);
-            //         if revenueRecog.FindSet() then
-            //             revenueRecog.Delete();
-
-            //         Clear(revenueRecog);
-            //         revenueRecog.SetRange("Entry No.", 511);
-            //         if revenueRecog.FindSet() then
-            //             revenueRecog.Delete();
-            //     end;
-            // }
             action(FetchRevenueDetails)
             {
                 Caption = 'Revenue Allocation-Other Charges';
@@ -2126,7 +2107,7 @@ page 50973 "Revenue Recognition Item Sub"
         permonthrent := RevenueRecognitionDetails."Final Annual Amount" / 12;
         Yearlydays := RevenueRecognitionDetails."Multi Year End Date" - RevenueRecognitionDetails."Multi Year Start Date" + 1;
         RevenueRecognitionDetails."Per Month Rent" := calculatepermonthrent(permonthrent, ActualNoOfDays, pRevenueAllocation.Month, pRevenueAllocation."Financial Year"); // Use the per day rent passed from the grid
-        RevenueRecognitionDetails."Total Value" := RevenueRecognitionDetails."No Of Days" * RevenueRecognitionDetails."Per Day Rent";
+        RevenueRecognitionDetails."Total Value" := RevenueRecognitionDetails."No Of Days" * RevenueRecognitionDetails."Per Month Rent";
         RevenueRecognitionDetails."Owner Share" := RevenueRecognitionDetails."Total Value";
 
         // Insert the record
