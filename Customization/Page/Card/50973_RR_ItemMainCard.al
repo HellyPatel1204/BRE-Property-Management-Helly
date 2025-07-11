@@ -36,6 +36,25 @@ page 50973 "Revenue Recognition Item Sub"
     {
         area(Processing)
         {
+            // action(delete)
+            // {
+            //     Image = Delete;
+            //     ApplicationArea = All;
+
+            //     trigger OnAction()
+            //     var
+            //         revenueRecog: Record "Revenue Recognition Details";
+            //     begin
+            //         revenueRecog.SetRange("Entry No.", 510);
+            //         if revenueRecog.FindSet() then
+            //             revenueRecog.Delete();
+
+            //         Clear(revenueRecog);
+            //         revenueRecog.SetRange("Entry No.", 511);
+            //         if revenueRecog.FindSet() then
+            //             revenueRecog.Delete();
+            //     end;
+            // }
             action(FetchRevenueDetails)
             {
                 Caption = 'Revenue Allocation-Other Charges';
