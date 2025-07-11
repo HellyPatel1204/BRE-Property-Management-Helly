@@ -187,6 +187,9 @@ page 50973 "Revenue Recognition Item Sub"
             until TenancyContract.Next() = 0;
         end;
 
+        // Process MISSED REVENUE for contracts that started in previous month
+        ProcessAllMissedRevenueAllocations(RevenueAllocation);
+
         // Refresh the page to show new details
         CurrPage.Update(false);
 
@@ -199,6 +202,352 @@ page 50973 "Revenue Recognition Item Sub"
             ProcessedContractCount
         );
     end;
+
+    // Enhanced procedure to process ALL missed revenue allocations dynamically
+    local procedure ProcessAllMissedRevenueAllocations(pCurrentAllocation: Record "Revenue Allocation Details")
+    var
+        TenancyContract: Record "Tenancy Contract";
+        RevenueStructure: Record "Revenue Structure";
+        PreviousAllocationMonth: Integer;
+        PreviousAllocationYear: Integer;
+        PreviousAllocationStartDate: Date;
+        PreviousAllocationEndDate: Date;
+        TempRevenueAllocation: Record "Revenue Allocation Details";
+        SelectedItemTypes: List of [Text];
+        MissedContractCount: Integer;
+    begin
+        // Get selected item types
+        GetSelectedItemTypes(SelectedItemTypes);
+
+        // Calculate previous month dynamically
+        PreviousAllocationMonth := pCurrentAllocation.Month - 1;
+        PreviousAllocationYear := pCurrentAllocation."Financial Year";
+
+        // Handle year transition
+        if PreviousAllocationMonth = 0 then begin
+            PreviousAllocationMonth := 12;
+            PreviousAllocationYear := PreviousAllocationYear - 1;
+        end;
+
+        // Calculate dates for the previous month
+        PreviousAllocationStartDate := DMY2Date(1, PreviousAllocationMonth, PreviousAllocationYear);
+        PreviousAllocationEndDate := CalcDate('CM', PreviousAllocationStartDate);
+
+        // Initialize missed contract counter
+        MissedContractCount := 0;
+
+        // Find ALL contracts that started in previous month (date 2-31)
+        TenancyContract.Reset();
+        TenancyContract.SetFilter("Contract Start Date", '%1..%2',
+            DMY2Date(2, PreviousAllocationMonth, PreviousAllocationYear),
+            PreviousAllocationEndDate);
+
+        if TenancyContract.FindSet() then begin
+            repeat
+                // Additional check: Contract should be active during previous month
+                if (TenancyContract."Contract Start Date" <= PreviousAllocationEndDate) and
+                   (TenancyContract."Contract End Date" >= PreviousAllocationStartDate) then begin
+
+                    // Check if this contract was missed in previous allocation
+                    if IsMissedRevenueAllocationForContract(
+                        TenancyContract."Contract ID",
+                        PreviousAllocationMonth,
+                        PreviousAllocationYear,
+                        pCurrentAllocation.Month,
+                        pCurrentAllocation."Financial Year"
+                    ) then begin
+
+                        // Get revenue structure for this contract
+                        RevenueStructure.Reset();
+                        RevenueStructure.SetRange("Contract ID", TenancyContract."Contract ID");
+                        RevenueStructure.SetFilter("Secondary Item Type", GetItemTypeFilter(SelectedItemTypes));
+
+                        if RevenueStructure.FindSet() then begin
+                            // Create temporary allocation record for missed month
+                            TempRevenueAllocation := pCurrentAllocation;
+                            TempRevenueAllocation.Month := PreviousAllocationMonth;
+                            TempRevenueAllocation."Financial Year" := PreviousAllocationYear;
+
+                            // Create missed revenue allocation for this contract
+                            CreateMissedRevenueAllocationForContract(
+                                TenancyContract,
+                                RevenueStructure,
+                                TempRevenueAllocation
+                            );
+
+                            MissedContractCount += 1;
+                        end;
+                    end;
+                end;
+            until TenancyContract.Next() = 0;
+        end;
+
+        // Optional: Show message about missed contracts processed
+        if MissedContractCount > 0 then
+            Message('Processed %1 missed revenue allocations for previous month (%2/%3)',
+                MissedContractCount, PreviousAllocationMonth, PreviousAllocationYear);
+    end;
+
+    // Enhanced check for missed revenue allocation - more dynamic
+    local procedure IsMissedRevenueAllocationForContract(
+        ContractID: Integer;
+        CheckMonth: Integer;
+        CheckYear: Integer;
+        currentMonth: Integer;
+        currentYear: Integer
+    ): Boolean
+    var
+        ExistingRevenue: Record "Revenue Recognition Details";
+        RegularAllocationExists: Boolean;
+        MissedAllocationExists: Boolean;
+    begin
+        // Check if regular revenue was already allocated for this contract in this month
+        ExistingRevenue.Reset();
+        ExistingRevenue.SetRange("Contract Id", ContractID);
+        ExistingRevenue.SetRange("Posting Month", currentMonth);
+        ExistingRevenue.SetRange("Posting Year", currentYear);
+        ExistingRevenue.SetFilter("Posting Period", '<>%1', 'MISSED*'); // Exclude missed allocations
+
+        RegularAllocationExists := not ExistingRevenue.IsEmpty;
+
+        // Check if missed allocation already exists for this contract
+        ExistingRevenue.Reset();
+        ExistingRevenue.SetRange("Contract Id", ContractID);
+        ExistingRevenue.SetRange("Posting Month", CheckMonth);
+        ExistingRevenue.SetRange("Posting Year", CheckYear);
+        ExistingRevenue.SetFilter("Posting Period", '%1', 'MISSED*'); // Only missed allocations
+
+        MissedAllocationExists := not ExistingRevenue.IsEmpty;
+
+        // Return true if no regular allocation exists AND no missed allocation exists
+        exit(RegularAllocationExists and not MissedAllocationExists);
+    end;
+
+    // Create missed revenue allocation for a specific contract
+    local procedure CreateMissedRevenueAllocationForContract(
+        pTenancyContract: Record "Tenancy Contract";
+        pRevenueStructure: Record "Revenue Structure";
+        pMissedAllocation: Record "Revenue Allocation Details"
+    )
+    var
+        RevenueStructureSubpage: Record "Revenue Structure Subpage";
+        SelectedItemTypes: List of [Text];
+        ItemType: Text;
+        ProcessedItemTypes: Integer;
+    begin
+        // Get selected item types
+        GetSelectedItemTypes(SelectedItemTypes);
+
+        ProcessedItemTypes := 0;
+
+        // Process each selected item type for this contract
+        foreach ItemType in SelectedItemTypes do begin
+            // Get revenue structure subpage for this item type
+            RevenueStructureSubpage.Reset();
+            RevenueStructureSubpage.SetRange("Contract ID", pTenancyContract."Contract ID");
+            RevenueStructureSubpage.SetRange("Secondary Item Type", ItemType);
+
+            if RevenueStructureSubpage.FindFirst() then begin
+                // Create missed revenue allocation record
+                CreateSingleMissedRevenueAllocation(
+                    pTenancyContract,
+                    RevenueStructureSubpage,
+                    pMissedAllocation,
+                    ItemType
+                );
+
+                ProcessedItemTypes += 1;
+            end;
+        end;
+    end;
+
+    // Enhanced missed revenue allocation creation with better contract detection
+    local procedure CreateSingleMissedRevenueAllocation(
+        pTenancyContract: Record "Tenancy Contract";
+        pRevenueStructureSubpage: Record "Revenue Structure Subpage";
+        pMissedAllocation: Record "Revenue Allocation Details";
+        pItemType: Text
+    )
+    var
+        RevenueRecognitionDetails: Record "Revenue Recognition Details";
+        PostingDate: Date;
+        NextEntryNo: Integer;
+        NoOfDays: Integer;
+        MissedAllocationStartDate: Date;
+        MissedAllocationEndDate: Date;
+        FinalCalculation: Record "Final Calculation";
+        TerminationDate: Date;
+        SuspensionDate: Date;
+        IsContractSuspended: Boolean;
+        Yearlydays: Integer;
+        ContractStartInMonth: Integer;
+        ContractStartDay: Integer;
+    begin
+        // Calculate missed month start and end dates
+        MissedAllocationStartDate := DMY2Date(1, pMissedAllocation.Month, pMissedAllocation."Financial Year");
+        MissedAllocationEndDate := CalcDate('CM', MissedAllocationStartDate);
+
+        // Get contract start day to verify it's in range 2-31
+        ContractStartDay := Date2DMY(pTenancyContract."Contract Start Date", 1);
+        ContractStartInMonth := Date2DMY(pTenancyContract."Contract Start Date", 2);
+
+        // Only process if contract started on day 2-31 of the previous month
+        if (ContractStartInMonth = pMissedAllocation.Month) and (ContractStartDay >= 2) then begin
+
+            // Convert Posting Month + Year to Date
+            PostingDate := DMY2Date(1, pMissedAllocation.Month, pMissedAllocation."Financial Year");
+
+            // Get termination date for this contract
+            FinalCalculation.Reset();
+            FinalCalculation.SetRange("Contract ID", pTenancyContract."Contract ID");
+            if FinalCalculation.FindFirst() then
+                TerminationDate := FinalCalculation."Termination Date"
+            else
+                TerminationDate := 0D;
+
+            // Check if contract was suspended in the missed month
+            IsContractSuspended := IsContractSuspendedInPeriod(
+                pTenancyContract."Contract ID",
+                pMissedAllocation.Month,
+                pMissedAllocation."Financial Year",
+                SuspensionDate
+            );
+
+            // Calculate number of days for missed allocation
+            NoOfDays := CalculatePerfectNoOfDays(
+                pTenancyContract."Contract Start Date",
+                pTenancyContract."Contract End Date",
+                pMissedAllocation.Month,
+                pMissedAllocation."Financial Year",
+                TerminationDate,
+                IsContractSuspended,
+                SuspensionDate
+            );
+
+            // Create missed revenue record only if there are days to allocate
+            if NoOfDays > 0 then begin
+                // Get next entry number
+                RevenueRecognitionDetails.Reset();
+                if RevenueRecognitionDetails.FindLast() then
+                    NextEntryNo := RevenueRecognitionDetails."Entry No." + 1
+                else
+                    NextEntryNo := 1;
+
+                // Create new Revenue Recognition Detail record for missed allocation
+                RevenueRecognitionDetails.Init();
+                RevenueRecognitionDetails."Entry No." := NextEntryNo;
+                RevenueRecognitionDetails."RR_No." := Rec."RR_No.";
+
+                // Copy contract details
+                RevenueRecognitionDetails."Contract Id" := pTenancyContract."Contract ID";
+                RevenueRecognitionDetails."Property Name" := pTenancyContract."Property Name";
+                RevenueRecognitionDetails."Customer Name" := pTenancyContract."Customer Name";
+                RevenueRecognitionDetails."Contract Start Date" := pTenancyContract."Contract Start Date";
+                RevenueRecognitionDetails."Contract End Date" := pTenancyContract."Contract End Date";
+                RevenueRecognitionDetails."Owner Name" := pTenancyContract."Owner's Name";
+                RevenueRecognitionDetails."Contract Tenure" := pTenancyContract."Contract Tenor";
+                RevenueRecognitionDetails."Grace Days" := pTenancyContract."Grace Period";
+                RevenueRecognitionDetails."Grace Start Date" := pTenancyContract."Grace Start Date";
+                RevenueRecognitionDetails."Grace End Date" := pTenancyContract."Grace End Date";
+
+                // Set unit names based on proposal type
+                if pTenancyContract."Praposal Type Selected" = pTenancyContract."Praposal Type Selected"::"Single Unit" then
+                    RevenueRecognitionDetails."Single Unit Names" := pTenancyContract."Unit Name"
+                else if pTenancyContract."Praposal Type Selected" = pTenancyContract."Praposal Type Selected"::"Merge Unit" then
+                    RevenueRecognitionDetails."Single Unit Names" := pTenancyContract."Single Unit Name"
+                else
+                    RevenueRecognitionDetails."Single Unit Names" := '';
+
+                // Add missed allocation period details
+                RevenueRecognitionDetails."Posting Month" := pMissedAllocation.Month;
+                RevenueRecognitionDetails."Posting Year" := pMissedAllocation."Financial Year";
+
+                // Mark as missed revenue allocation with contract start date info
+                RevenueRecognitionDetails."Posting Period" :=
+                    'MISSED: ' + FORMAT(pMissedAllocation.Month) + '/' + FORMAT(pMissedAllocation."Financial Year") +
+                    ' (Started: ' + FORMAT(pTenancyContract."Contract Start Date") + ')';
+
+                // Set termination date and number of days
+                RevenueRecognitionDetails."Termination Date" := TerminationDate;
+                RevenueRecognitionDetails."No Of Days" := NoOfDays;
+
+                // Get suspension details
+                GetSuspensionDetails(pTenancyContract."Contract ID", RevenueRecognitionDetails);
+
+                // Set revenue structure details from subpage
+                RevenueRecognitionDetails."Multi Year Start Date" := pRevenueStructureSubpage."Period Start Date";
+                RevenueRecognitionDetails."Multi Year End Date" := pRevenueStructureSubpage."Period End Date";
+                RevenueRecognitionDetails."Annual Amount" := pRevenueStructureSubpage."Final Annual Amount" + pRevenueStructureSubpage."Final Annual Amount" * 5 / 100;
+                RevenueRecognitionDetails."Final Annual Amount" := RevenueRecognitionDetails."Annual Amount";
+                RevenueRecognitionDetails."Item Type" := pItemType;
+                RevenueRecognitionDetails."Contract Amount" := pRevenueStructureSubpage."Final Annual Amount";
+
+                // Calculate amounts
+                Yearlydays := RevenueRecognitionDetails."Multi Year End Date" - RevenueRecognitionDetails."Multi Year Start Date" + 1;
+                if Yearlydays > 0 then
+                    RevenueRecognitionDetails."Per Day Rent" := RevenueRecognitionDetails."Annual Amount" / Yearlydays
+                else
+                    RevenueRecognitionDetails."Per Day Rent" := 0;
+
+                RevenueRecognitionDetails."Total Value" := RevenueRecognitionDetails."No Of Days" * RevenueRecognitionDetails."Per Day Rent";
+                RevenueRecognitionDetails."Owner Share" := RevenueRecognitionDetails."Total Value";
+
+                // Insert the missed revenue record
+                RevenueRecognitionDetails.Insert(true);
+            end;
+        end;
+    end;
+
+    // Perfect calculation of number of days - enhanced for missed allocations
+    local procedure CalculatePerfectNoOfDays(
+        ContractStartDate: Date;
+        ContractEndDate: Date;
+        ProcessMonth: Integer;
+        ProcessYear: Integer;
+        TerminationDate: Date;
+        IsContractSuspended: Boolean;
+        SuspensionDate: Date
+    ): Integer
+    var
+        MonthStartDate: Date;
+        MonthEndDate: Date;
+        EffectiveStartDate: Date;
+        EffectiveEndDate: Date;
+        NoOfDays: Integer;
+    begin
+        // Calculate month boundaries
+        MonthStartDate := DMY2Date(1, ProcessMonth, ProcessYear);
+        MonthEndDate := CalcDate('CM', MonthStartDate);
+
+        // For missed allocations, use the actual contract start date if it's within the month
+        if (ContractStartDate >= MonthStartDate) and (ContractStartDate <= MonthEndDate) then
+            EffectiveStartDate := ContractStartDate
+        else
+            EffectiveStartDate := MonthStartDate;
+
+        // Determine effective end date (earlier of contract end, month end, or termination date)
+        EffectiveEndDate := MonthEndDate;
+
+        if ContractEndDate < EffectiveEndDate then
+            EffectiveEndDate := ContractEndDate;
+
+        if (TerminationDate <> 0D) and (TerminationDate < EffectiveEndDate) then
+            EffectiveEndDate := TerminationDate;
+
+        // Handle suspension
+        if IsContractSuspended and (SuspensionDate <> 0D) and (SuspensionDate < EffectiveEndDate) then
+            EffectiveEndDate := SuspensionDate;
+
+        // Calculate number of days
+        if EffectiveEndDate >= EffectiveStartDate then
+            NoOfDays := EffectiveEndDate - EffectiveStartDate + 1
+        else
+            NoOfDays := 0;
+
+        exit(NoOfDays);
+    end;
+
+
 
     // UPDATED: Function to check if contract should be processed
     local procedure ShouldProcessContract(pTenancyContract: Record "Tenancy Contract"; pAllocationMonth: Integer; pAllocationYear: Integer): Boolean
@@ -853,6 +1202,9 @@ page 50973 "Revenue Recognition Item Sub"
             until TenancyContract.Next() = 0;
         end;
 
+        // Process MISSED REVENUE for contracts that started in previous month
+        ProcessAllMissedRevenueAllocationss(RevenueAllocation);
+
         // Refresh the page to show new details
         CurrPage.Update(false);
 
@@ -865,6 +1217,351 @@ page 50973 "Revenue Recognition Item Sub"
         //     ProcessedContractCount
         // );
     end;
+
+    // Enhanced procedure to process ALL missed revenue allocations dynamically
+    local procedure ProcessAllMissedRevenueAllocationss(pCurrentAllocation: Record "Revenue Allocation Details")
+    var
+        TenancyContract: Record "Tenancy Contract";
+        RevenueStructure: Record "Revenue Structure";
+        PreviousAllocationMonth: Integer;
+        PreviousAllocationYear: Integer;
+        PreviousAllocationStartDate: Date;
+        PreviousAllocationEndDate: Date;
+        TempRevenueAllocation: Record "Revenue Allocation Details";
+        SelectedItemTypes: List of [Text];
+        MissedContractCount: Integer;
+    begin
+        // Get selected item types
+        GetSelectedItemTypess(SelectedItemTypes);
+
+        // Calculate previous month dynamically
+        PreviousAllocationMonth := pCurrentAllocation.Month - 1;
+        PreviousAllocationYear := pCurrentAllocation."Financial Year";
+
+        // Handle year transition
+        if PreviousAllocationMonth = 0 then begin
+            PreviousAllocationMonth := 12;
+            PreviousAllocationYear := PreviousAllocationYear - 1;
+        end;
+
+        // Calculate dates for the previous month
+        PreviousAllocationStartDate := DMY2Date(1, PreviousAllocationMonth, PreviousAllocationYear);
+        PreviousAllocationEndDate := CalcDate('CM', PreviousAllocationStartDate);
+
+        // Initialize missed contract counter
+        MissedContractCount := 0;
+
+        // Find ALL contracts that started in previous month (date 2-31)
+        TenancyContract.Reset();
+        TenancyContract.SetFilter("Contract Start Date", '%1..%2',
+            DMY2Date(2, PreviousAllocationMonth, PreviousAllocationYear),
+            PreviousAllocationEndDate);
+
+        if TenancyContract.FindSet() then begin
+            repeat
+                // Additional check: Contract should be active during previous month
+                if (TenancyContract."Contract Start Date" <= PreviousAllocationEndDate) and
+                   (TenancyContract."Contract End Date" >= PreviousAllocationStartDate) then begin
+
+                    // Check if this contract was missed in previous allocation
+                    if IsMissedRevenueAllocationForContracts(
+                        TenancyContract."Contract ID",
+                        PreviousAllocationMonth,
+                        PreviousAllocationYear,
+                        pCurrentAllocation.Month,
+                        pCurrentAllocation."Financial Year"
+                    ) then begin
+
+                        // Get revenue structure for this contract
+                        RevenueStructure.Reset();
+                        RevenueStructure.SetRange("Contract ID", TenancyContract."Contract ID");
+                        RevenueStructure.SetFilter("Secondary Item Type", GetItemTypeFilter(SelectedItemTypes));
+
+                        if RevenueStructure.FindSet() then begin
+                            // Create temporary allocation record for missed month
+                            TempRevenueAllocation := pCurrentAllocation;
+                            TempRevenueAllocation.Month := PreviousAllocationMonth;
+                            TempRevenueAllocation."Financial Year" := PreviousAllocationYear;
+
+                            // Create missed revenue allocation for this contract
+                            CreateMissedRevenueAllocationForContracts(
+                                TenancyContract,
+                                RevenueStructure,
+                                TempRevenueAllocation
+                            );
+
+                            MissedContractCount += 1;
+                        end;
+                    end;
+                end;
+            until TenancyContract.Next() = 0;
+        end;
+
+        // Optional: Show message about missed contracts processed
+        if MissedContractCount > 0 then
+            Message('Processed %1 missed revenue allocations for previous month (%2/%3)',
+                MissedContractCount, PreviousAllocationMonth, PreviousAllocationYear);
+    end;
+
+    // Enhanced check for missed revenue allocation - more dynamic
+    local procedure IsMissedRevenueAllocationForContracts(
+        ContractID: Integer;
+        CheckMonth: Integer;
+        CheckYear: Integer;
+        currentMonth: Integer;
+        currentYear: Integer
+    ): Boolean
+    var
+        ExistingRevenue: Record "Revenue Recognition Details";
+        RegularAllocationExists: Boolean;
+        MissedAllocationExists: Boolean;
+    begin
+        // Check if regular revenue was already allocated for this contract in this month
+        ExistingRevenue.Reset();
+        ExistingRevenue.SetRange("Contract Id", ContractID);
+        ExistingRevenue.SetRange("Posting Month", currentMonth);
+        ExistingRevenue.SetRange("Posting Year", currentYear);
+        ExistingRevenue.SetFilter("Posting Period", '<>%1', 'MISSED*'); // Exclude missed allocations
+
+        RegularAllocationExists := not ExistingRevenue.IsEmpty;
+
+        // Check if missed allocation already exists for this contract
+        ExistingRevenue.Reset();
+        ExistingRevenue.SetRange("Contract Id", ContractID);
+        ExistingRevenue.SetRange("Posting Month", CheckMonth);
+        ExistingRevenue.SetRange("Posting Year", CheckYear);
+        ExistingRevenue.SetFilter("Posting Period", '%1', 'MISSED*'); // Only missed allocations
+
+        MissedAllocationExists := not ExistingRevenue.IsEmpty;
+
+        // Return true if no regular allocation exists AND no missed allocation exists
+        exit(RegularAllocationExists and not MissedAllocationExists);
+    end;
+
+    // Create missed revenue allocation for a specific contract
+    local procedure CreateMissedRevenueAllocationForContracts(
+        pTenancyContract: Record "Tenancy Contract";
+        pRevenueStructure: Record "Revenue Structure";
+        pMissedAllocation: Record "Revenue Allocation Details"
+    )
+    var
+        RevenueStructureSubpage: Record "Revenue Structure Subpage";
+        SelectedItemTypes: List of [Text];
+        ItemType: Text;
+        ProcessedItemTypes: Integer;
+    begin
+        // Get selected item types
+        GetSelectedItemTypess(SelectedItemTypes);
+
+        ProcessedItemTypes := 0;
+
+        // Process each selected item type for this contract
+        foreach ItemType in SelectedItemTypes do begin
+            // Get revenue structure subpage for this item type
+            RevenueStructureSubpage.Reset();
+            RevenueStructureSubpage.SetRange("Contract ID", pTenancyContract."Contract ID");
+            RevenueStructureSubpage.SetRange("Secondary Item Type", ItemType);
+
+            if RevenueStructureSubpage.FindFirst() then begin
+                // Create missed revenue allocation record
+                CreateSingleMissedRevenueAllocations(
+                    pTenancyContract,
+                    RevenueStructureSubpage,
+                    pMissedAllocation,
+                    ItemType
+                );
+
+                ProcessedItemTypes += 1;
+            end;
+        end;
+    end;
+
+    // Enhanced missed revenue allocation creation with better contract detection
+    local procedure CreateSingleMissedRevenueAllocations(
+        pTenancyContract: Record "Tenancy Contract";
+        pRevenueStructureSubpage: Record "Revenue Structure Subpage";
+        pMissedAllocation: Record "Revenue Allocation Details";
+        pItemType: Text
+    )
+    var
+        RevenueRecognitionDetails: Record "Revenue Recognition Details";
+        PostingDate: Date;
+        NextEntryNo: Integer;
+        NoOfDays: Integer;
+        MissedAllocationStartDate: Date;
+        MissedAllocationEndDate: Date;
+        FinalCalculation: Record "Final Calculation";
+        TerminationDate: Date;
+        SuspensionDate: Date;
+        IsContractSuspended: Boolean;
+        Yearlydays: Integer;
+        ContractStartInMonth: Integer;
+        ContractStartDay: Integer;
+        permonthrent: Decimal;
+    begin
+        // Calculate missed month start and end dates
+        MissedAllocationStartDate := DMY2Date(1, pMissedAllocation.Month, pMissedAllocation."Financial Year");
+        MissedAllocationEndDate := CalcDate('CM', MissedAllocationStartDate);
+
+        // Get contract start day to verify it's in range 2-31
+        ContractStartDay := Date2DMY(pTenancyContract."Contract Start Date", 1);
+        ContractStartInMonth := Date2DMY(pTenancyContract."Contract Start Date", 2);
+
+        // Only process if contract started on day 2-31 of the previous month
+        if (ContractStartInMonth = pMissedAllocation.Month) and (ContractStartDay >= 2) then begin
+
+            // Convert Posting Month + Year to Date
+            PostingDate := DMY2Date(1, pMissedAllocation.Month, pMissedAllocation."Financial Year");
+
+            // Get termination date for this contract
+            FinalCalculation.Reset();
+            FinalCalculation.SetRange("Contract ID", pTenancyContract."Contract ID");
+            if FinalCalculation.FindFirst() then
+                TerminationDate := FinalCalculation."Termination Date"
+            else
+                TerminationDate := 0D;
+
+            // Check if contract was suspended in the missed month
+            IsContractSuspended := IsContractSuspendedInPeriods(
+                pTenancyContract."Contract ID",
+                pMissedAllocation.Month,
+                pMissedAllocation."Financial Year",
+                SuspensionDate
+            );
+
+            // Calculate number of days for missed allocation
+            NoOfDays := CalculatePerfectNoOfDayss(
+                pTenancyContract."Contract Start Date",
+                pTenancyContract."Contract End Date",
+                pMissedAllocation.Month,
+                pMissedAllocation."Financial Year",
+                TerminationDate,
+                IsContractSuspended,
+                SuspensionDate
+            );
+
+            // Create missed revenue record only if there are days to allocate
+            if NoOfDays > 0 then begin
+                // Get next entry number
+                RevenueRecognitionDetails.Reset();
+                if RevenueRecognitionDetails.FindLast() then
+                    NextEntryNo := RevenueRecognitionDetails."Entry No." + 1
+                else
+                    NextEntryNo := 1;
+
+                // Create new Revenue Recognition Detail record for missed allocation
+                RevenueRecognitionDetails.Init();
+                RevenueRecognitionDetails."Entry No." := NextEntryNo;
+                RevenueRecognitionDetails."RR_No." := Rec."RR_No.";
+
+                // Copy contract details
+                RevenueRecognitionDetails."Contract Id" := pTenancyContract."Contract ID";
+                RevenueRecognitionDetails."Property Name" := pTenancyContract."Property Name";
+                RevenueRecognitionDetails."Customer Name" := pTenancyContract."Customer Name";
+                RevenueRecognitionDetails."Contract Start Date" := pTenancyContract."Contract Start Date";
+                RevenueRecognitionDetails."Contract End Date" := pTenancyContract."Contract End Date";
+                RevenueRecognitionDetails."Owner Name" := pTenancyContract."Owner's Name";
+                RevenueRecognitionDetails."Contract Tenure" := pTenancyContract."Contract Tenor";
+                RevenueRecognitionDetails."Grace Days" := pTenancyContract."Grace Period";
+                RevenueRecognitionDetails."Grace Start Date" := pTenancyContract."Grace Start Date";
+                RevenueRecognitionDetails."Grace End Date" := pTenancyContract."Grace End Date";
+
+                // Set unit names based on proposal type
+                if pTenancyContract."Praposal Type Selected" = pTenancyContract."Praposal Type Selected"::"Single Unit" then
+                    RevenueRecognitionDetails."Single Unit Names" := pTenancyContract."Unit Name"
+                else if pTenancyContract."Praposal Type Selected" = pTenancyContract."Praposal Type Selected"::"Merge Unit" then
+                    RevenueRecognitionDetails."Single Unit Names" := pTenancyContract."Single Unit Name"
+                else
+                    RevenueRecognitionDetails."Single Unit Names" := '';
+
+                // Add missed allocation period details
+                RevenueRecognitionDetails."Posting Month" := pMissedAllocation.Month;
+                RevenueRecognitionDetails."Posting Year" := pMissedAllocation."Financial Year";
+
+                // Mark as missed revenue allocation with contract start date info
+                RevenueRecognitionDetails."Posting Period" :=
+                    'MISSED: ' + FORMAT(pMissedAllocation.Month) + '/' + FORMAT(pMissedAllocation."Financial Year") +
+                    ' (Started: ' + FORMAT(pTenancyContract."Contract Start Date") + ')';
+
+                // Set termination date and number of days
+                RevenueRecognitionDetails."Termination Date" := TerminationDate;
+                RevenueRecognitionDetails."No Of Days" := NoOfDays;
+
+                // Get suspension details
+                GetSuspensionDetails(pTenancyContract."Contract ID", RevenueRecognitionDetails);
+
+                // Set revenue structure details from subpage
+                RevenueRecognitionDetails."Multi Year Start Date" := pRevenueStructureSubpage."Period Start Date";
+                RevenueRecognitionDetails."Multi Year End Date" := pRevenueStructureSubpage."Period End Date";
+                RevenueRecognitionDetails."Annual Amount" := pRevenueStructureSubpage."Final Annual Amount" + pRevenueStructureSubpage."Final Annual Amount" * 5 / 100;
+                RevenueRecognitionDetails."Final Annual Amount" := RevenueRecognitionDetails."Annual Amount";
+                RevenueRecognitionDetails."Item Type" := pItemType;
+                RevenueRecognitionDetails."Contract Amount" := pRevenueStructureSubpage."Final Annual Amount";
+
+                permonthrent := RevenueRecognitionDetails."Final Annual Amount" / 12;
+                // Calculate amounts
+                Yearlydays := RevenueRecognitionDetails."Multi Year End Date" - RevenueRecognitionDetails."Multi Year Start Date" + 1;
+                RevenueRecognitionDetails."Per Month Rent" := Calculatepermonthrents(permonthrent, NoOfDays, pMissedAllocation.Month, pMissedAllocation."Financial Year"); // Use the per day rent passed from the grid
+
+                RevenueRecognitionDetails."Total Value" := RevenueRecognitionDetails."No Of Days" * RevenueRecognitionDetails."Per Day Rent";
+                RevenueRecognitionDetails."Owner Share" := RevenueRecognitionDetails."Total Value";
+
+                // Insert the missed revenue record
+                RevenueRecognitionDetails.Insert(true);
+            end;
+        end;
+    end;
+
+    // Perfect calculation of number of days - enhanced for missed allocations
+    local procedure CalculatePerfectNoOfDayss(
+        ContractStartDate: Date;
+        ContractEndDate: Date;
+        ProcessMonth: Integer;
+        ProcessYear: Integer;
+        TerminationDate: Date;
+        IsContractSuspended: Boolean;
+        SuspensionDate: Date
+    ): Integer
+    var
+        MonthStartDate: Date;
+        MonthEndDate: Date;
+        EffectiveStartDate: Date;
+        EffectiveEndDate: Date;
+        NoOfDays: Integer;
+    begin
+        // Calculate month boundaries
+        MonthStartDate := DMY2Date(1, ProcessMonth, ProcessYear);
+        MonthEndDate := CalcDate('CM', MonthStartDate);
+
+        // For missed allocations, use the actual contract start date if it's within the month
+        if (ContractStartDate >= MonthStartDate) and (ContractStartDate <= MonthEndDate) then
+            EffectiveStartDate := ContractStartDate
+        else
+            EffectiveStartDate := MonthStartDate;
+
+        // Determine effective end date (earlier of contract end, month end, or termination date)
+        EffectiveEndDate := MonthEndDate;
+
+        if ContractEndDate < EffectiveEndDate then
+            EffectiveEndDate := ContractEndDate;
+
+        if (TerminationDate <> 0D) and (TerminationDate < EffectiveEndDate) then
+            EffectiveEndDate := TerminationDate;
+
+        // Handle suspension
+        if IsContractSuspended and (SuspensionDate <> 0D) and (SuspensionDate < EffectiveEndDate) then
+            EffectiveEndDate := SuspensionDate;
+
+        // Calculate number of days
+        if EffectiveEndDate >= EffectiveStartDate then
+            NoOfDays := EffectiveEndDate - EffectiveStartDate + 1
+        else
+            NoOfDays := 0;
+
+        exit(NoOfDays);
+    end;
+
+
 
     // UPDATED: Function to check if contract should be processed
     local procedure ShouldProcessContracts(pTenancyContract: Record "Tenancy Contract"; pAllocationMonth: Integer; pAllocationYear: Integer): Boolean
@@ -1450,6 +2147,20 @@ page 50973 "Revenue Recognition Item Sub"
 
         if ActualNoOfDays < revenuerecognition.GetDaysInMonthss(DMY2Date(1, MonthNo, FinancialYear)) then begin
             MonthlyRate := Round(permonthrent / revenuerecognition.GetDaysInMonthss(DMY2Date(1, MonthNo, FinancialYear)) * ActualNoOfDays);
+        end else begin
+            MonthlyRate := permonthrent;
+        end;
+        exit(MonthlyRate);
+    end;
+
+    procedure Calculatepermonthrents(permonthrent: Decimal; NoOfDays: Integer; MonthNo: Integer; FinancialYear: Integer): Decimal
+    var
+        revenuerecognition: Record "Revenue Recognition";
+        MonthlyRate: Decimal;
+    begin
+
+        if NoOfDays < revenuerecognition.GetDaysInMonthss(DMY2Date(1, MonthNo, FinancialYear)) then begin
+            MonthlyRate := Round(permonthrent / revenuerecognition.GetDaysInMonthss(DMY2Date(1, MonthNo, FinancialYear)) * NoOfDays);
         end else begin
             MonthlyRate := permonthrent;
         end;
